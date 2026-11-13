@@ -1,8 +1,11 @@
-/* Wear Journal 2.0 — 静的な個人用着用記録。外部送信処理はありません。 */
+/* Wear Journal v3 — local-first clothing journal. No data is uploaded. */
 (() => {
   'use strict';
 
-  const STORAGE_KEY = 'wear-journal-data-v2';
+  const STORAGE_KEY = 'wear-journal-data-v3';
+  const V2_KEY = 'wear-journal-data-v2';
+  const PHOTO = window.WearJournalPhotos;
+  const ARCHIVE = window.WearJournalArchive;
   const LEGACY_KEY = 'shoe-journal-2026-v1';
   const BACKUP_META_KEY = 'wear-journal-last-export';
   const FORMAT = 'wear-journal-json';
@@ -21,7 +24,7 @@
   const validDate = s => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) && s === toDateString(localDate(s));
   const today = () => toDateString();
   const makeId = () => 'i-' + (crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(36).slice(2));
-  const emptyState = () => ({ schemaVersion: 2, trackingStart: today(), enabledCategories: ['shoes'], items: [], entries: {} });
+  const emptyState = () => ({ schemaVersion: 3, trackingStart: today(), enabledCategories: ['shoes'], items: [], entries: {} });
   const escapeHtml = t => String(t).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
   const owns = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
   let state = emptyState();
@@ -34,6 +37,9 @@
   let noteTimer;
   let storageAvailable = true;
   let readOnly = false;
+  let photoInputFor = null;
+  let imageBusy = false;
+  const randomPhotoId = () => 'p-' + (crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(36).slice(2));
 
   function notify(message, isError = false, persistent = false) {
     const el = $('message');
@@ -44,9 +50,9 @@
     if (!persistent) messageTimer = setTimeout(() => { el.hidden = true; }, 5200);
   }
 
-  // 保持する形式は常に v2。キー名を変更せず、将来の移行関数でアップグレードする。
+  // v3形式で保存。v2のキーは移行後もそのまま残して保護する。
   function normalize(raw) {
-    if (!raw || typeof raw !== 'object' || raw.schemaVersion !== 2) throw Error('未対応のバックアップ形式です');
+    if (!raw || typeof raw !== 'object' || raw.schemaVersion !== 3) throw Error('未対応のバックアップ形式です');
     if (!validDate(raw.trackingStart) || !Array.isArray(raw.enabledCategories) || !Array.isArray(raw.items) || !raw.entries || typeof raw.entries !== 'object' || Array.isArray(raw.entries)) throw Error('保存データの形式が不正です');
     if (raw.items.length > 2000 || Object.keys(raw.entries).length > 30000) throw Error('データの件数が多すぎます');
     const enabledCategories = [...new Set(['shoes', ...raw.enabledCategories.filter(k => owns(CATEGORY,k))])];
@@ -58,7 +64,8 @@
         id: v.id, name: v.name.slice(0,100), category: v.category,
         active: v.active !== false,
         icon: typeof v.icon === 'string' && [...v.icon].length <= 4 ? v.icon : CATEGORY[v.category].icon,
-        color: typeof v.color === 'string' && /^#[0-9a-f]{6}$/i.test(v.color) ? v.color : COLORS[i % COLORS.length]
+        color: typeof v.color === 'string' && /^#[0-9a-f]{6}$/i.test(v.color) ? v.color : COLORS[i % COLORS.length],
+        imageId: typeof v.imageId === 'string' && /^p-[A-Za-z0-9-]{8,100}$/.test(v.imageId) ? v.imageId : null
       };
     });
     const entries = {};
@@ -68,7 +75,12 @@
       if (ids.length > 500 || ids.some(id => !seen.has(id))) throw Error('登録されていないアイテムを参照する記録があります');
       entries[date] = { items: ids, rest: Boolean(v.rest) && ids.length === 0, note: typeof v.note === 'string' ? v.note.slice(0,800) : '' };
     }
-    return { schemaVersion: 2, trackingStart: raw.trackingStart, enabledCategories, items, entries };
+    return { schemaVersion: 3, trackingStart: raw.trackingStart, enabledCategories, items, entries };
+  }
+
+  function migrateV2(old) {
+    if (!old || old.schemaVersion !== 2) throw Error('v2形式の保存データが不正です');
+    return normalize({ ...old, schemaVersion: 3, items: old.items?.map(item => ({...item, imageId:null})) });
   }
 
   // Shoe Journal v1 のローカルデータとJSONバックアップの両方に対応。
@@ -79,7 +91,7 @@
       items: old.shoes.map(s => ({ id:s.id, name:s.name, category:'shoes', active:s.active, icon:s.icon, color:s.color })),
       entries: Object.fromEntries(Object.entries(old.entries).map(([day,v]) => [day, {items: v.shoes,rest:v.rest,note:v.note}]))
     };
-    return normalize(transformed);
+    return migrateV2(transformed);
   }
 
   function readInitialState() {
@@ -87,47 +99,41 @@
       const current = localStorage.getItem(STORAGE_KEY);
       if (current !== null) {
         try { state = normalize(JSON.parse(current)); }
-        catch(e) { readOnly = true; notify('保存データを読み取れません。上書き事故を防ぐため操作を制限しました。既存のJSONバックアップから復元してください。', true, true); }
+        catch(e) { readOnly = true; notify('保存データを安全に読み取れません。上書きを防ぐため編集を停止しました。バックアップから復元してください。',true,true); }
         return;
       }
-      const old = localStorage.getItem(LEGACY_KEY);
-      if (old !== null) {
+      // Migrate in ascending order; never delete/overwrite the old source key.
+      const v2 = localStorage.getItem(V2_KEY);
+      const v1 = v2 === null ? localStorage.getItem(LEGACY_KEY) : null;
+      if (v2 !== null || v1 !== null) {
         try {
-          const migrated = migrateV1(JSON.parse(old));
+          const migrated = v2 !== null ? migrateV2(JSON.parse(v2)) : migrateV1(JSON.parse(v1));
           localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated));
           state = migrated;
-          notify('以前のShoe Journalの記録を引き継ぎました。念のためJSONバックアップを保存してください。', false, true);
+          notify('以前の記録をv3へ引き継ぎました。ZIPバックアップをiCloud Driveに保存してください。',false,true);
         } catch(e) {
           readOnly = true;
-          notify('旧データを安全に移行できませんでした。元のデータは変更していません。バックアップを確認してください。',true,true);
+          notify('旧データを移行できませんでした。古い保存データは変更していません。復元用のJSONを確認してください。',true,true);
         }
       } else {
-        // 空の状態も保存し、ブラウザ保存が利用可能か検証する。
         localStorage.setItem(STORAGE_KEY,JSON.stringify(state));
       }
     } catch(e) {
-      storageAvailable = false;
-      notify('このブラウザでは永続保存が使えません。入力内容を残すにはJSONバックアップが必要です。',true,true);
+      storageAvailable=false;readOnly=true;
+      notify('この端末で保存領域を使えません。記録を保護するため編集を停止しました。',true,true);
     }
   }
 
   function persist(next) {
-    if (readOnly) { notify('保存データを保護しています。まずJSONから復元してください。', true, true); return false; }
+    if (readOnly) { notify('保存データを保護しています。先にバックアップを確認してください。',true,true); return false; }
     try {
-      const valid = normalize(next);
+      const valid=normalize(next);
       localStorage.setItem(STORAGE_KEY,JSON.stringify(valid));
-      state = valid;
-      storageAvailable = true;
+      state=valid;storageAvailable=true;
       return true;
     } catch(e) {
-      if (e instanceof DOMException || e?.name === 'SecurityError' || e?.name === 'QuotaExceededError') {
-        storageAvailable = false;
-        // 一時的に画面上では保持。閉じる前にJSONの書き出しが必要。
-        state = normalize(next);
-        notify('端末に保存できませんでした。画面を閉じる前にJSONを保存してください。',true,true);
-      } else {
-        notify('保存できませんでした：' + e.message,true,true);
-      }
+      storageAvailable=false;
+      notify('保存できませんでした。端末の空き容量とブラウザの保存設定を確認してください：'+e.message,true,true);
       return false;
     }
   }
@@ -212,6 +218,22 @@
     target.querySelectorAll('[data-cat]').forEach(el=>el.addEventListener('click',()=>callback(el.dataset.cat)));
   }
 
+  async function hydrateImages(root = document) {
+    const slots=[...root.querySelectorAll('.photo-slot[data-image-id]')];
+    for(const slot of slots) {
+      const imageId=slot.dataset.imageId;
+      if(!imageId || slot.dataset.loaded===imageId)continue;
+      try {
+        const url=await PHOTO.urlFor(imageId);
+        if(!url || !slot.isConnected || slot.dataset.imageId!==imageId)continue;
+        const img=document.createElement('img');img.src=url;img.alt='';img.loading='lazy';
+        img.className='item-photo';
+        slot.replaceChildren(img);slot.dataset.loaded=imageId;
+        slot.classList.add('has-photo');
+      } catch(e) { /* A missing photo must never interfere with wear logs. */ }
+    }
+  }
+
   function renderEditor() {
     const d=localDate(selected),entry=entryFor(selected),future=selected>today();
     const cats=visibleCategoriesForDay();
@@ -224,7 +246,7 @@
     $('item-buttons').innerHTML=items.length ? items.map(item=>{
       const chosen=entry.items.includes(item.id);
       return `<button type="button" class="item-choice ${chosen?'selected':''}" data-item-id="${escapeHtml(item.id)}" aria-pressed="${chosen}" ${future||readOnly?'disabled':''}>
-        <span class="item-emoji" aria-hidden="true">${escapeHtml(item.icon)}</span><span class="item-label">${escapeHtml(item.name)}</span><span class="selected-marker" aria-hidden="true">${chosen?'●':'○'}</span></button>`;
+        <span class="item-emoji photo-slot" data-image-id="${escapeHtml(item.imageId||'')}" aria-hidden="true">${escapeHtml(item.icon)}</span><span class="item-label">${escapeHtml(item.name)}</span><span class="selected-marker" aria-hidden="true">${chosen?'●':'○'}</span></button>`;
     }).join('') : `<div class="empty-state">まだ${CATEGORY[selectedCategory].label}の登録がありません。<button type="button" class="inline-link" id="open-items">アイテムを追加する</button></div>`;
     $('item-buttons').querySelectorAll('[data-item-id]').forEach(el=>el.addEventListener('click',()=>{
       flushNote();
@@ -239,6 +261,7 @@
     $('no-wear-mark').textContent=entry.rest?'●':'○';
     $('day-memo').disabled=future||readOnly;
     $('day-memo').value=entry.note;
+    hydrateImages($('item-buttons'));
     $('clear-record').disabled=future||readOnly||!owns(state.entries,selected);
   }
 
@@ -252,13 +275,31 @@
       const wears=savedDays().filter(([,entry])=>entry.items.includes(item.id)).map(([d])=>d).sort();
       const last=wears[wears.length-1];
       return `<div class="item-row">
-        <div class="item-badge">${escapeHtml(item.icon)}</div>
+        <div class="item-badge photo-slot" data-image-id="${escapeHtml(item.imageId||'')}">${escapeHtml(item.icon)}</div>
         <div class="item-text"><div class="item-title">${escapeHtml(item.name)}${item.active?'':'<span class="tag">引退</span>'}</div>
           <div class="item-description">${last?'最終着用 '+last:'記録なし'}</div>
-          <div class="item-actions"><button type="button" data-rename="${escapeHtml(item.id)}">名前を変更</button><button type="button" data-archive="${escapeHtml(item.id)}">${item.active?'引退にする':'使用を再開'}</button></div>
+          <div class="item-actions"><button type="button" data-photo="${escapeHtml(item.id)}">${item.imageId?'写真を変更':'写真を登録'}</button>${item.imageId?`<button type="button" data-remove-photo="${escapeHtml(item.id)}">写真を外す</button>`:''}<button type="button" data-rename="${escapeHtml(item.id)}">名前を変更</button><button type="button" data-archive="${escapeHtml(item.id)}">${item.active?'引退にする':'使用を再開'}</button></div>
         </div><div class="item-amount"><strong>${wears.length}</strong> 回</div>
       </div>`;
     }).join('') : '<div class="empty-state">まだ登録がありません。下のフォームで追加してください。</div>';
+    hydrateImages($('item-list'));
+    $('item-list').querySelectorAll('[data-photo]').forEach(el=>el.addEventListener('click',()=>{
+      if (readOnly || imageBusy) return;
+      photoInputFor=el.dataset.photo;
+      $('photo-file').value='';
+      $('photo-file').click();
+    }));
+    $('item-list').querySelectorAll('[data-remove-photo]').forEach(el=>el.addEventListener('click',async()=>{
+      if (readOnly || imageBusy || !confirm('このアイテムの写真を外しますか？着用履歴は残ります。')) return;
+      const id=el.dataset.removePhoto,item=findItem(id);
+      if(!item?.imageId)return;
+      const next=structuredClone(state),oldId=item.imageId;
+      next.items.find(it=>it.id===id).imageId=null;
+      if(persist(next)){
+        redraw();notify('写真を外しました。着用履歴はそのままです。');
+        await PHOTO.remove(oldId).catch(()=>{});
+      }
+    }));
     $('item-list').querySelectorAll('[data-rename]').forEach(el=>el.addEventListener('click',()=>{
       const id=el.dataset.rename,item=findItem(id),name=prompt('新しいアイテム名',item.name);
       if(name===null)return;
@@ -275,6 +316,58 @@
     }));
     $('item-category-wrapper').hidden=cats.length<=1;
     $('item-category').innerHTML=cats.map(id=>`<option value="${id}" ${id===itemFilter?'selected':''}>${CATEGORY[id].label}</option>`).join('');
+  }
+
+  async function attachPhoto(file) {
+    if(!file || !photoInputFor || readOnly || imageBusy)return;
+    const itemId=photoInputFor;
+    if(!findItem(itemId))return;
+    imageBusy=true;
+    notify('写真を縮小・保存しています…',false,true);
+    const newId=randomPhotoId();
+    try {
+      const blob=await PHOTO.compress(file);
+      await PHOTO.put(newId,blob);
+      const current=findItem(itemId);
+      const oldId=current.imageId;
+      const next=structuredClone(state);
+      next.items.find(it=>it.id===itemId).imageId=newId;
+      if(!persist(next))throw Error('写真の参照先を保存できませんでした');
+      redraw();
+      notify(`写真を保存しました（${Math.round(blob.size/1024)}KB）。ZIPバックアップも更新してください。`);
+      if(oldId) await PHOTO.remove(oldId).catch(()=>{});
+    } catch(e) {
+      await PHOTO.remove(newId).catch(()=>{});
+      notify('写真を保存できませんでした：'+e.message,true,true);
+    } finally { imageBusy=false;photoInputFor=null;$('photo-file').value=''; }
+  }
+
+  function renderSummary() {
+    const monthStr=`${Math.floor(displayedMonth/12)}-${pad(displayedMonth%12+1)}`;
+    $('summary-month').textContent=`${Math.floor(displayedMonth/12)}年 ${displayedMonth%12+1}月`;
+    $('summary-next').disabled=displayedMonth>=monthNumber(today());
+    const byCat={};
+    const relevant=Object.entries(state.entries).filter(([day])=>day.startsWith(monthStr));
+    const logged=relevant.filter(([,entry])=>entry.items.length>0||entry.rest).length;
+    $('summary-days').textContent=`${logged}日 記録済み`;
+    for(const [,entry] of relevant){
+      for(const id of entry.items){
+        const item=findItem(id); if(!item)continue;
+        if(!byCat[item.category])byCat[item.category]={};
+        byCat[item.category][id]=(byCat[item.category][id]||0)+1;
+      }
+    }
+    const cats=Object.keys(CATEGORY).filter(k=>state.enabledCategories.includes(k)||byCat[k]);
+    $('summary-content').innerHTML=cats.map(cat=>{
+      const counts=Object.entries(byCat[cat]||{}).sort((a,b)=>b[1]-a[1]);
+      const total=counts.reduce((n, row)=>n+row[1],0);
+      const lines=counts.length?counts.map(([id,count],i)=>{
+        const item=findItem(id);
+        return `<div class="summary-item"><span class="summary-place">${i+1}</span><div class="summary-photo photo-slot" data-image-id="${escapeHtml(item.imageId||'')}">${escapeHtml(item.icon)}</div><div class="summary-name">${escapeHtml(item.name)}</div><strong>${count}回</strong></div>`;
+      }).join(''):'<p class="muted">この月はまだ着用記録がありません。</p>';
+      return `<section class="summary-section"><div class="summary-section-head"><h3>${escapeHtml(CATEGORY[cat].label)}</h3><span>${total}回</span></div>${lines}</section>`;
+    }).join('');
+    hydrateImages($('summary-content'));
   }
 
   function renderSettings() {
@@ -294,33 +387,70 @@
   function redraw() {
     if(activeTab==='calendar'){renderCalendar();renderEditor();}
     else if(activeTab==='items')renderItemList();
+    else if(activeTab==='summary')renderSummary();
     else renderSettings();
   }
 
-  function buildBackup() {
-    return JSON.stringify({format:FORMAT,backupVersion:1,exportedAt:new Date().toISOString(),data:state},null,2);
+  function buildJsonBackup() {
+    // Text-only fallback for compatibility and troubleshooting. It does NOT contain images.
+    const textState=structuredClone(state);
+    textState.items.forEach(item=>{item.imageId=null;});
+    return JSON.stringify({format:FORMAT,backupVersion:2,exportedAt:new Date().toISOString(),includesImages:false,data:textState},null,2);
   }
-  function downloadText(content, name, mime) {
-    const url=URL.createObjectURL(new Blob([content],{type:mime}));
-    const link=document.createElement('a');link.href=url;link.download=name;document.body.appendChild(link);link.click();link.remove();
-    setTimeout(()=>URL.revokeObjectURL(url),20000);
+  function downloadBlob(blob, name) {
+    const url=URL.createObjectURL(blob);
+    const link=document.createElement('a');link.href=url;link.download=name;
+    document.body.appendChild(link);link.click();link.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),60000);
   }
+  function downloadText(content,name,mime) {downloadBlob(new Blob([content],{type:mime}),name);}
   function afterExport() {
-    try{localStorage.setItem(BACKUP_META_KEY,new Date().toISOString())}catch(e){}
+    try { localStorage.setItem(BACKUP_META_KEY,new Date().toISOString()); } catch(e){}
     if(activeTab==='settings')renderSettings();
   }
-  function backupName(){return `wear-journal-backup-${today()}.json`;}
+  const backupZipName=()=>`wear-journal-full-${today()}.zip`;
+  const backupJsonName=()=>`wear-journal-text-only-${today()}.json`;
+
+  async function makeFullBackup() {
+    const files=[];
+    const photoEntries=[];
+    const uniqueIds=[...new Set(state.items.map(it=>it.imageId).filter(Boolean))];
+    if(uniqueIds.length>600)throw Error('写真が多すぎます（最大600枚）');
+    let total=0;
+    for(const imageId of uniqueIds){
+      const photo=await PHOTO.get(imageId);
+      if(!photo || !(photo.blob instanceof Blob))throw Error('写真が見つかりません：'+imageId+'。画像を再登録するか、JSONのみで記録をバックアップしてください');
+      const path=`images/${imageId}.jpg`;
+      total+=photo.blob.size;
+      if(total>90*1024*1024)throw Error('写真が90MBを超えました。バックアップを分割できません');
+      files.push({name:path,data:photo.blob});
+      photoEntries.push({imageId,path,bytes:photo.blob.size,type:'image/jpeg'});
+    }
+    const metadata={format:'wear-journal-full',backupVersion:1,exportedAt:new Date().toISOString(),data:structuredClone(state),images:photoEntries};
+    files.unshift({name:'data.json',data:JSON.stringify(metadata,null,2)});
+    return await ARCHIVE.makeZip(files);
+  }
+  async function backupZip(share=false) {
+    if(imageBusy)return notify('写真の保存が終わってからバックアップしてください',true);
+    const btn=$('backup-zip');btn.disabled=true;
+    notify('すべての写真と着用履歴をZIPにまとめています…',false,true);
+    try {
+      const blob=await makeFullBackup();
+      const name=backupZipName();
+      const file=new File([blob],name,{type:'application/zip'});
+      if(share && navigator.share && navigator.canShare?.({files:[file]})) {
+        try {await navigator.share({files:[file],title:'Wear Journal 完全バックアップ'});}
+        catch(e){if(e.name==='AbortError')return;throw e;}
+      } else downloadBlob(blob,name);
+      afterExport();notify('ZIPを作成しました。iCloud Driveに保存されたかファイルアプリで確認してください。');
+    } catch(e) {notify('ZIPバックアップ失敗：'+e.message,true,true);}
+    finally {btn.disabled=false;}
+  }
   function exportJson() {
-    downloadText(buildBackup(),backupName(),'application/json;charset=utf-8');afterExport();
-    notify('JSONのダウンロードを開始しました。iCloud Driveに保存されたことを確認してください。');
+    downloadText(buildJsonBackup(),backupJsonName(),'application/json;charset=utf-8');
+    afterExport();notify('文字データだけのJSONを作成しました。写真は含まれません。');
   }
-  async function shareJson() {
-    const blob=new File([buildBackup()],backupName(),{type:'application/json'});
-    if(navigator.canShare?.({files:[blob]}) && navigator.share) {
-      try {await navigator.share({files:[blob],title:'Wear Journal バックアップ'});afterExport();notify('共有画面を閉じました。保存先にファイルがあるか確認してください。');}
-      catch(e){if(e.name!=='AbortError')notify('共有できませんでした。「JSONを書き出す」をお試しください。',true);}
-    } else exportJson();
-  }
+
   const csv = value => '"'+String(value ?? '').replace(/"/g,'""')+'"';
   function exportCsv() {
     const rows=[['日付','カテゴリー','アイテム名','状態','メモ']];
@@ -333,28 +463,71 @@
     notify('CSVのダウンロードを開始しました。');
   }
   function convertImport(raw) {
-    if(raw?.format===FORMAT && raw?.data) return normalize(raw.data);
-    if(raw?.schemaVersion===2) return normalize(raw);
-    if(raw?.version===1) return migrateV1(raw);
-    throw Error('このJSONはWear Journalのバックアップではありません');
+    if(raw?.format===FORMAT && raw?.data)return convertImport(raw.data);
+    if(raw?.schemaVersion===3){
+      const result=normalize(raw);
+      // JSON cannot restore photos; remove references to stale local image IDs.
+      result.items.forEach(item=>{item.imageId=null;});
+      return result;
+    }
+    if(raw?.schemaVersion===2)return migrateV2(raw);
+    if(raw?.version===1)return migrateV1(raw);
+    throw Error('このJSONは対応するWear Journalのバックアップではありません');
   }
-  async function importJson(file) {
-    if (!file)return;
+  function restorePrompt(imported, withPhotos) {
+    const count=Object.values(imported.entries).filter(v=>v.items.length||v.rest).length;
+    const currentCount=Object.values(state.entries).filter(v=>v.items.length||v.rest).length;
+    return confirm(`バックアップを復元しますか？\n\n復元：${imported.items.length}点・${count}日${withPhotos?'（写真あり）':'（写真なし）'}\n現在：${state.items.length}点・${currentCount}日\n\n現在のデータは置き換わります。今のZIPバックアップを先に保存しましたか？`);
+  }
+  function completeRestore(imported) {
+    const valid=normalize(imported);
+    // localStorage writes before switching in-memory state. Never erase v2 source key.
+    localStorage.setItem(STORAGE_KEY,JSON.stringify(valid));
+    state=valid;readOnly=false;storageAvailable=true;
+    selected=today();displayedMonth=monthNumber(selected);selectedCategory='shoes';itemFilter='shoes';
+    setTab('calendar');notify('復元しました。写真と過去の記録を確認してください。');
+  }
+  async function importFile(file) {
+    if(!file)return;
+    if(imageBusy)return notify('写真処理中のため復元できません',true);
     try {
-      if(file.size>12*1024*1024)throw Error('ファイルが大きすぎます');
-      const imported=convertImport(JSON.parse(await file.text()));
-      const count=Object.values(imported.entries).filter(v=>v.items.length||v.rest).length;
-      const currentCount=Object.values(state.entries).filter(v=>v.items.length||v.rest).length;
-      const ok=confirm(`このバックアップを復元しますか？\n\n読み込む：${imported.items.length}点・${count}日\n現在：${state.items.length}点・${currentCount}日\n\n現在のデータは上書きされます。先に現在のJSONを別途保存しましたか？`);
-      if(!ok)return;
-      // 元のデータが破損して readOnly だったケースのみ復元で復旧させる。
-      const serialized=JSON.stringify(imported);
-      localStorage.setItem(STORAGE_KEY,serialized);
-      state=imported;readOnly=false;storageAvailable=true;
-      selected=today();displayedMonth=monthNumber(selected);selectedCategory='shoes';itemFilter='shoes';
-      setTab('calendar');notify('復元しました。登録内容が正しいかカレンダーで確認してください。');
-    } catch(e) {notify('復元できませんでした：'+e.message,true,true);}
-    finally {$('restore-file').value='';}
+      if(file.name.toLowerCase().endsWith('.zip')){
+        const contents=await ARCHIVE.readZip(file);
+        const metadata=JSON.parse(ARCHIVE.decode(contents.get('data.json')));
+        if(metadata?.format!=='wear-journal-full'||metadata.backupVersion!==1||!Array.isArray(metadata.images))throw Error('Wear Journalの完全バックアップではありません');
+        const imported=normalize(metadata.data);
+        const previousPhotoIds=[...new Set(state.items.map(it=>it.imageId).filter(Boolean))];
+        const required=new Set(imported.items.map(it=>it.imageId).filter(Boolean));
+        if(required.size!==metadata.images.length)throw Error('バックアップの写真一覧が不正です');
+        if(!restorePrompt(imported,true))return;
+        const updated=structuredClone(imported),newKeys=[];
+        try {
+          const remap=new Map();
+          for(const descriptor of metadata.images){
+            const origId=descriptor.imageId;
+            if(!required.has(origId)||descriptor.path!==`images/${origId}.jpg`||descriptor.type!=='image/jpeg'||remap.has(origId))throw Error('写真のメタデータが正しくありません');
+            const bytes=contents.get(descriptor.path);
+            if(!bytes||bytes.length!==descriptor.bytes||bytes[0]!==0xff||bytes[1]!==0xd8||bytes[2]!==0xff)throw Error('バックアップ内の画像が壊れています');
+            const newId=randomPhotoId();
+            await PHOTO.put(newId,new Blob([bytes],{type:'image/jpeg'}));
+            newKeys.push(newId);remap.set(origId,newId);
+          }
+          updated.items.forEach(it=>{if(it.imageId)it.imageId=remap.get(it.imageId);});
+          completeRestore(updated);
+          // Delete photos no longer referenced by the restored data to reclaim space.
+          for(const id of previousPhotoIds)await PHOTO.remove(id).catch(()=>{});
+        }catch(e){
+          for(const id of newKeys)await PHOTO.remove(id).catch(()=>{});
+          throw e;
+        }
+      } else {
+        if(file.size>12*1024*1024)throw Error('JSONが大きすぎます');
+        const imported=convertImport(JSON.parse(await file.text()));
+        if(!restorePrompt(imported,false))return;
+        completeRestore(imported);
+      }
+    }catch(e){notify('復元できませんでした：'+e.message,true,true);}
+    finally{$('restore-file').value='';}
   }
 
   document.querySelectorAll('[data-tab]').forEach(el=>el.addEventListener('click',()=>setTab(el.dataset.tab)));
@@ -399,13 +572,17 @@
     if(!owns(CATEGORY,category))return notify('カテゴリーを確認してください',true);
     const next=structuredClone(state);
     const count=next.items.length;
-    next.items.push({id:makeId(),name:name.slice(0,100),category,active:true,icon:CATEGORY[category].icon,color:COLORS[count%COLORS.length]});
+    next.items.push({id:makeId(),name:name.slice(0,100),category,active:true,icon:CATEGORY[category].icon,color:COLORS[count%COLORS.length],imageId:null});
     if(persist(next)) { $('item-name').value=''; itemFilter=category;redraw();notify('アイテムを登録しました'); }
   });
+  $('backup-zip').addEventListener('click',()=>backupZip(false));
+  $('share-zip').addEventListener('click',()=>backupZip(true));
   $('backup-json').addEventListener('click',exportJson);
-  $('share-json').addEventListener('click',shareJson);
   $('backup-csv').addEventListener('click',exportCsv);
-  $('restore-file').addEventListener('change',e=>importJson(e.target.files[0]));
+  $('restore-file').addEventListener('change',e=>importFile(e.target.files[0]));
+  $('photo-file').addEventListener('change',e=>attachPhoto(e.target.files[0]));
+  $('summary-prev').addEventListener('click',()=>changeMonth(-1));
+  $('summary-next').addEventListener('click',()=>changeMonth(1));
   $('update-start').addEventListener('click',()=>{
     const value=$('start-date').value;
     if(!validDate(value)||value>today())return notify('今日以前の有効な日付を選んでください',true);
