@@ -1,3 +1,25 @@
+# Wear Journal v3.2 — カテゴリーとアーカイブ管理
+
+この版では、**従来の着用記録とアイテム写真をそのまま引き継いで**、次の変更を追加しています。
+
+- 画面表示の「パンツ」を **「ボトムス」** に変更。内部カテゴリーIDはこれまでの `pants` のままで、既存アイテムも着用記録も変わりません。
+- **「ワンピース」** カテゴリー（内部ID `dresses`、👗）を新設。「設定・バックアップ」→「使うカテゴリー」でチェックを入れると、アイテム登録・日付の選択・月次集計で使用できます。既存利用者に無断でカテゴリを有効化しない方針です。
+- **「引退する」** を押したアイテムは、普段の「持ち物と着用回数」一覧から消え、同じ画面の折りたたみ式 **「引退したアイテム」** に移動します。新たな着用候補には通常表示しません。写真と過去の記録、月次集計は維持され、アーカイブから **「使用を再開」** できます。過去に着た日には従来通り表示されます。
+- **「削除」** は引退とは異なる、完全な削除です。着用履歴がないアイテムは確認ダイアログで削除できます。着用履歴がある場合、削除するアイテム名の再入力と二度目の確認が必須です。削除時は当該アイテムをすべての日付の記録から除外し、紐づく写真も端末から削除します。空になった日付の扱いは記録状態によります。**操作は取り消せないため、削除前に完全ZIPバックアップを保存してください。**
+
+## 更新前に確認（重要）
+
+1. **まず現在使っているiPhoneホーム画面版**の「設定・バックアップ」から、写真を含む「完全バックアップZIP」をiCloud Driveに保存して実際に存在することを確認してください。
+2. このZIPの**中のファイル**を、現在のGitHubリポジトリ `hirokinam/wear-journal` のルートに同名上書きでアップロードし、Commit changesします。バックアップZIPはGitHubに公開しないでください。
+3. URL `https://hirokinam.github.io/wear-journal/` とホーム画面のアプリはそのまま使います。ホーム画面のアプリを削除したり、新しいURLを作ったりしないでください。
+4. 更新後はアプリの表示が `v3.2` になり、今までの着用履歴・画像が残っていることを確認してください。「設定・バックアップ」から「ワンピース」を有効にできます。
+
+**保存形式はv3.1と同じです。** localStorageの `wear-journal-data-v3`、`schemaVersion:3`、IndexedDB `wear-journal-photos-v1` のキーや構造に変更はありません。既存のZIPバックアップも同じ形式で復元できます。別端末への自動同期はありません。
+
+**テスト**：JavaScript構文チェック、ブラウザDOMテスト（旧v3データ読み込み、カテゴリ名変更、カテゴリ新設、引退・復帰、削除の確認、過去記録の維持）を実施。iPhoneのSafari・ホーム画面実機では未検証のため、アップロード前のバックアップを必ずお願いします。
+
+---
+
 # Wear Journal v3.1 — Daily Look View
 
 This release updates only the calendar's DAILY ENTRY interface. Previously recorded items are now shown together at the top in a photo grid, grouped visually across categories. The long list of choices starts collapsed for recorded days and opens from **「着用アイテムを追加・変更」**. Unrecorded days start with the choices open.

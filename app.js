@@ -1,4 +1,4 @@
-/* Wear Journal v3.1 — local-first clothing journal. No data is uploaded. */
+/* Wear Journal v3.2 — local-first clothing journal. No data is uploaded. */
 (() => {
   'use strict';
 
@@ -12,7 +12,8 @@
   const CATEGORY = {
     shoes:   { label: '靴', icon: '👞' },
     jackets: { label: 'ジャケット・アウター', icon: '🧥' },
-    pants:   { label: 'パンツ', icon: '👖' },
+    pants:   { label: 'ボトムス', icon: '👖' },
+    dresses: { label: 'ワンピース', icon: '👗' },
     tops:    { label: 'トップス', icon: '👕' },
     other:   { label: 'その他', icon: '🧣' }
   };
@@ -241,7 +242,7 @@
   function renderDayLook(entry) {
     const target=$('day-look');
     const worn=entry.items.map(id=>findItem(id)).filter(Boolean);
-    const order={jackets:0,tops:1,pants:2,shoes:3,other:4};
+    const order={jackets:0,tops:1,dresses:2,pants:3,shoes:4,other:5};
     worn.sort((a,b)=>(order[a.category]??99)-(order[b.category]??99));
     if(worn.length){
       target.innerHTML=`<div class="look-head"><div class="overline">TODAY'S LOOK</div><span class="look-count">${worn.length}点</span></div>
@@ -294,31 +295,65 @@
     $('clear-record').disabled=future||readOnly||!owns(state.entries,selected);
   }
 
-  function renderItemList() {
-    const cats=state.enabledCategories;
-    if (!cats.includes(itemFilter)) itemFilter=cats[0] || 'shoes';
-    $('item-filter').hidden=cats.length<=1;
-    if(cats.length>1) renderCategoryPills($('item-filter'),cats,itemFilter,category=>{itemFilter=category;renderItemList();});
-    const items=state.items.filter(it=>it.category===itemFilter).sort((a,b)=>Number(b.active)-Number(a.active));
-    $('item-list').innerHTML=items.length?items.map(item=>{
-      const wears=savedDays().filter(([,entry])=>entry.items.includes(item.id)).map(([d])=>d).sort();
-      const last=wears[wears.length-1];
-      return `<div class="item-row">
-        <div class="item-badge photo-slot" data-image-id="${escapeHtml(item.imageId||'')}">${escapeHtml(item.icon)}</div>
-        <div class="item-text"><div class="item-title">${escapeHtml(item.name)}${item.active?'':'<span class="tag">引退</span>'}</div>
-          <div class="item-description">${last?'最終着用 '+last:'記録なし'}</div>
-          <div class="item-actions"><button type="button" data-photo="${escapeHtml(item.id)}">${item.imageId?'写真を変更':'写真を登録'}</button>${item.imageId?`<button type="button" data-remove-photo="${escapeHtml(item.id)}">写真を外す</button>`:''}<button type="button" data-rename="${escapeHtml(item.id)}">名前を変更</button><button type="button" data-archive="${escapeHtml(item.id)}">${item.active?'引退にする':'使用を再開'}</button></div>
-        </div><div class="item-amount"><strong>${wears.length}</strong> 回</div>
-      </div>`;
-    }).join('') : '<div class="empty-state">まだ登録がありません。下のフォームで追加してください。</div>';
-    hydrateImages($('item-list'));
-    $('item-list').querySelectorAll('[data-photo]').forEach(el=>el.addEventListener('click',()=>{
-      if (readOnly || imageBusy) return;
+  // Items marked inactive are excluded from the everyday inventory and new-day choices,
+  // but retain their stable item IDs, images, wear counts and historical outfit cards.
+  function itemRowMarkup(item, retired = false) {
+    const wears=savedDays().filter(([,entry])=>entry.items.includes(item.id)).map(([d])=>d).sort();
+    const last=wears[wears.length-1];
+    return `<div class="item-row ${retired?'retired-row':''}">
+      <div class="item-badge photo-slot" data-image-id="${escapeHtml(item.imageId||'')}">${escapeHtml(item.icon)}</div>
+      <div class="item-text">
+        <div class="item-title">${escapeHtml(item.name)}${retired?'<span class="tag">引退済み</span>':''}</div>
+        ${retired?`<div class="item-kind">${escapeHtml(CATEGORY[item.category].label)}</div>`:''}
+        <div class="item-description">${last?'最終着用 '+last:'着用記録なし'}</div>
+        <div class="item-actions">
+          <button type="button" data-photo="${escapeHtml(item.id)}">${item.imageId?'写真を変更':'写真を登録'}</button>
+          ${item.imageId?`<button type="button" data-remove-photo="${escapeHtml(item.id)}">写真を外す</button>`:''}
+          <button type="button" data-rename="${escapeHtml(item.id)}">名前を変更</button>
+          <button type="button" data-archive="${escapeHtml(item.id)}">${retired?'使用を再開':'引退する'}</button>
+          <button type="button" class="delete-item" data-delete="${escapeHtml(item.id)}">削除</button>
+        </div>
+      </div><div class="item-amount"><strong>${wears.length}</strong> 回</div>
+    </div>`;
+  }
+
+  // Deleting is intentionally explicit and irreversible without a ZIP backup.
+  // Retire instead whenever the owner wishes to keep the item's wear history.
+  function deleteItem(id) {
+    if(readOnly || imageBusy)return;
+    const item=findItem(id);
+    if(!item)return;
+    const wornDates=Object.entries(state.entries).filter(([,entry])=>entry.items.includes(id));
+    if(wornDates.length) {
+      const agreed=prompt(`「${item.name}」は ${wornDates.length}日分の着用履歴があります。\n\n削除するとアイテム本体・写真・これらの日付の着用記録からこのアイテムが完全に消えます。引退なら履歴が残ります。\n\n削除を実行する場合は、アイテム名を正確に入力してください。`, '');
+      if(agreed===null)return;
+      if(agreed!==item.name)return notify('名前が一致しなかったため、削除しませんでした。',true);
+      if(!confirm(`${wornDates.length}日分の履歴から「${item.name}」を削除します。最新のZIPバックアップを保存しましたか？\nこの操作は取り消せません。`))return;
+    } else if(!confirm(`「${item.name}」を完全に削除しますか？\n写真も削除されます。この操作は取り消せません。`))return;
+    const next=structuredClone(state);
+    next.items=next.items.filter(it=>it.id!==id);
+    for(const [date,entry] of Object.entries(next.entries)) {
+      if(!entry.items.includes(id))continue;
+      entry.items=entry.items.filter(other=>other!==id);
+      if(!entry.items.length && !entry.rest && !entry.note.trim()) delete next.entries[date];
+    }
+    if(!persist(next))return;
+    const photoId=item.imageId;
+    redraw();
+    notify(wornDates.length?`「${item.name}」を削除し、${wornDates.length}日分の記録から除外しました。`:`「${item.name}」を削除しました。`);
+    if(photoId && !state.items.some(other=>other.imageId===photoId)) {
+      PHOTO.remove(photoId).catch(()=>notify('アイテムは削除されましたが、写真データの後片付けに失敗しました。',true));
+    }
+  }
+
+  function bindItemActions(root) {
+    root.querySelectorAll('[data-photo]').forEach(el=>el.addEventListener('click',()=>{
+      if(readOnly || imageBusy) return;
       photoInputFor=el.dataset.photo;
       $('photo-file').value='';
       $('photo-file').click();
     }));
-    $('item-list').querySelectorAll('[data-remove-photo]').forEach(el=>el.addEventListener('click',async()=>{
+    root.querySelectorAll('[data-remove-photo]').forEach(el=>el.addEventListener('click',async()=>{
       if (readOnly || imageBusy || !confirm('このアイテムの写真を外しますか？着用履歴は残ります。')) return;
       const id=el.dataset.removePhoto,item=findItem(id);
       if(!item?.imageId)return;
@@ -326,23 +361,57 @@
       next.items.find(it=>it.id===id).imageId=null;
       if(persist(next)){
         redraw();notify('写真を外しました。着用履歴はそのままです。');
-        await PHOTO.remove(oldId).catch(()=>{});
+        if(!state.items.some(other=>other.imageId===oldId))await PHOTO.remove(oldId).catch(()=>{});
       }
     }));
-    $('item-list').querySelectorAll('[data-rename]').forEach(el=>el.addEventListener('click',()=>{
-      const id=el.dataset.rename,item=findItem(id),name=prompt('新しいアイテム名',item.name);
+    root.querySelectorAll('[data-rename]').forEach(el=>el.addEventListener('click',()=>{
+      if(readOnly)return;
+      const id=el.dataset.rename,item=findItem(id),name=prompt('新しいアイテム名',item?.name||'');
       if(name===null)return;
       if(!name.trim())return notify('名前を入力してください',true);
       const next=structuredClone(state);
-      next.items.find(it=>it.id===id).name=name.trim().slice(0,100);
-      persist(next);redraw();
+      const target=next.items.find(it=>it.id===id);
+      if(!target)return;
+      target.name=name.trim().slice(0,100);
+      if(persist(next))redraw();
     }));
-    $('item-list').querySelectorAll('[data-archive]').forEach(el=>el.addEventListener('click',()=>{
+    root.querySelectorAll('[data-archive]').forEach(el=>el.addEventListener('click',()=>{
+      if(readOnly)return;
+      const id=el.dataset.archive,original=findItem(id);
+      if(!original)return;
+      if(original.active && !confirm(`「${original.name}」を引退（アーカイブ）しますか？\n通常のアイテム一覧・新しい着用候補から隠します。過去の着用履歴と写真は残り、「引退したアイテム」から再開できます。`))return;
       const next=structuredClone(state);
-      const item=next.items.find(it=>it.id===el.dataset.archive);
+      const item=next.items.find(it=>it.id===id);
       item.active=!item.active;
-      persist(next);redraw();
+      if(item.active){
+        if(!next.enabledCategories.includes(item.category))next.enabledCategories.push(item.category);
+        itemFilter=item.category;
+      }
+      if(persist(next)){
+        redraw();
+        notify(item.active?'使用を再開しました。':'アーカイブしました。過去の着用履歴は残っています。');
+      }
     }));
+    root.querySelectorAll('[data-delete]').forEach(el=>el.addEventListener('click',()=>deleteItem(el.dataset.delete)));
+  }
+
+  function renderItemList() {
+    const cats=state.enabledCategories;
+    if (!cats.includes(itemFilter)) itemFilter=cats[0] || 'shoes';
+    $('item-filter').hidden=cats.length<=1;
+    if(cats.length>1) renderCategoryPills($('item-filter'),cats,itemFilter,category=>{itemFilter=category;renderItemList();});
+    const items=state.items.filter(it=>it.active && it.category===itemFilter);
+    $('item-list').innerHTML=items.length?items.map(it=>itemRowMarkup(it)).join(''):
+      `<div class="empty-state">現在使用中の${CATEGORY[itemFilter].label}はありません。下のフォームから追加できます。</div>`;
+    const retired=state.items.filter(it=>!it.active);
+    $('retired-count').textContent=`${retired.length}点`;
+    $('retired-items').hidden=retired.length===0;
+    if(!retired.length)$('retired-items').open=false;
+    $('retired-list').innerHTML=retired.map(it=>itemRowMarkup(it,true)).join('');
+    hydrateImages($('item-list'));
+    hydrateImages($('retired-list'));
+    bindItemActions($('item-list'));
+    bindItemActions($('retired-list'));
     $('item-category-wrapper').hidden=cats.length<=1;
     $('item-category').innerHTML=cats.map(id=>`<option value="${id}" ${id===itemFilter?'selected':''}>${CATEGORY[id].label}</option>`).join('');
   }

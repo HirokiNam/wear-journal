@@ -54,3 +54,17 @@
 .day-choices-content .item-choice{padding:9px;min-height:52px}
 @media(min-width:880px){.look-photo{height:124px}}
 @media(max-width:420px){.look-grid{gap:8px}.look-card{padding:8px}.look-photo{height:104px}.look-name{font-size:11px}}
+
+/* v3.2 — archive management and deliberately destructive delete action */
+.retired-items{margin:19px 0 8px;background:#f8f9f6;border:1px solid #dfe5dc;border-radius:13px;overflow:hidden}
+.retired-items>summary{list-style:none;display:flex;justify-content:space-between;align-items:center;gap:10px;padding:13px 15px;min-height:47px;cursor:pointer;font-size:12.5px;color:#576a58;font-weight:700}
+.retired-items>summary::-webkit-details-marker{display:none}
+.retired-count{font-size:11px;font-weight:600;color:#6f8071;background:#e7eee5;border-radius:99px;padding:3px 8px;margin-left:6px}
+.retired-arrow{font-size:18px;transition:transform .15s ease}
+.retired-items[open] .retired-arrow{transform:rotate(180deg)}
+.retired-help{margin:0 14px 6px;color:var(--sub);font-size:11px;line-height:1.6}
+#retired-list{padding:0 14px 7px}
+.retired-row{opacity:.84}
+.item-kind{font-size:10px;font-weight:650;color:#738575;margin-top:2px}
+.item-actions button.delete-item{border-color:#e8d6d1;background:#fffafa;color:#ac6057}
+.item-actions button.delete-item:focus-visible{outline-color:#db9585}

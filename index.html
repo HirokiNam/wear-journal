@@ -11,17 +11,17 @@
   <link rel="icon" type="image/png" href="./icon-192.png">
   <link rel="apple-touch-icon" href="./icon-192.png">
   <link rel="manifest" href="./manifest.webmanifest">
-  <link rel="stylesheet" href="./style.css?v=3.1">
+  <link rel="stylesheet" href="./style.css?v=3.2">
   <script src="./photos.js?v=3.0" defer></script>
   <script src="./archive.js?v=3.0" defer></script>
-  <script src="./app.js?v=3.1" defer></script>
+  <script src="./app.js?v=3.2" defer></script>
   <title>Wear Journal | 着用記録</title>
 </head>
 <body>
 <div class="shell">
   <header class="brandbar">
     <div>
-      <div class="overline">PERSONAL WEAR ARCHIVE <span class="edition">v3.1</span></div>
+      <div class="overline">PERSONAL WEAR ARCHIVE <span class="edition">v3.2</span></div>
       <h1>Wear Journal<span class="dot-title">.</span></h1>
       <p>お気に入りを、長く使うための着用記録。</p>
     </div>
@@ -84,9 +84,14 @@
     <section id="view-items" class="view" role="tabpanel" aria-labelledby="tab-items" hidden>
       <div class="panel"><div class="panel-inner">
         <h2 class="panel-heading">持ち物と着用回数</h2>
-        <p class="muted intro">写真を登録すると、自動的に縮小してこの端末に保存します。写真は一度保存するだけで、何日分の記録からでも参照できます。名前変更や引退でも過去の記録は残ります。</p>
+        <p class="muted intro">写真を登録すると、自動的に縮小してこの端末に保存します。写真は一度保存するだけで、何日分の記録からでも参照できます。名前変更や引退でも過去の記録は残ります。引退したものは下のアーカイブに移動します。削除すると過去の着用記録からも消えます。</p>
         <div id="item-filter" class="category-tabs"></div>
         <div id="item-list"></div>
+        <details id="retired-items" class="retired-items" hidden>
+          <summary><span>引退したアイテム <span id="retired-count" class="retired-count">0点</span></span><span aria-hidden="true" class="retired-arrow">⌄</span></summary>
+          <p class="retired-help">ここにあるアイテムは日々の選択肢に表示されません。写真と過去の着用記録は保存されています。「使用を再開」で戻せます。</p>
+          <div id="retired-list"></div>
+        </details>
         <input id="photo-file" type="file" accept="image/*,.heic,.heif" class="file-input" aria-label="アイテムの写真を選択">
         <form id="item-form" class="item-form">
           <h3 class="small-heading">新しいアイテムを追加</h3>
@@ -131,7 +136,7 @@
         </div>
         <div class="setting-section">
           <h3>使うカテゴリー</h3>
-          <p>最初は「靴」だけ。ジャケットやパンツを記録したくなったら、ここで追加できます。無効にしても、過去の記録は削除されません。</p>
+          <p>最初は「靴」だけ。ボトムスやワンピースなども、ここで有効にできます。無効にしても、過去の記録は削除されません。</p>
           <div id="categories-setting" class="category-settings"></div>
         </div>
         <div class="setting-section">
