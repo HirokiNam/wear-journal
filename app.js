@@ -1,4 +1,4 @@
-/* Wear Journal v3 — local-first clothing journal. No data is uploaded. */
+/* Wear Journal v3.1 — local-first clothing journal. No data is uploaded. */
 (() => {
   'use strict';
 
@@ -31,6 +31,8 @@
   let selected = today();
   let displayedMonth = new Date().getFullYear() * 12 + new Date().getMonth();
   let selectedCategory = 'shoes';
+  let editorOptionsDate = null;
+  let editorOptionsOpen = false;
   let itemFilter = 'shoes';
   let activeTab = 'calendar';
   let messageTimer;
@@ -234,12 +236,39 @@
     }
   }
 
+  // View only: the day's cards reuse the existing item ID / image ID.
+  // No new persisted fields or image copies are created.
+  function renderDayLook(entry) {
+    const target=$('day-look');
+    const worn=entry.items.map(id=>findItem(id)).filter(Boolean);
+    const order={jackets:0,tops:1,pants:2,shoes:3,other:4};
+    worn.sort((a,b)=>(order[a.category]??99)-(order[b.category]??99));
+    if(worn.length){
+      target.innerHTML=`<div class="look-head"><div class="overline">TODAY'S LOOK</div><span class="look-count">${worn.length}点</span></div>
+        <div class="look-grid">${worn.map(item=>`<div class="look-card" title="${escapeHtml(item.name)}">
+          <div class="look-photo photo-slot" data-image-id="${escapeHtml(item.imageId||'')}" aria-hidden="true">${escapeHtml(item.icon)}</div>
+          <div class="look-caption"><span class="look-category">${escapeHtml(CATEGORY[item.category].label)}</span><span class="look-name">${escapeHtml(item.name)}</span></div>
+        </div>`).join('')}</div>`;
+      hydrateImages(target);
+    } else {
+      target.innerHTML=entry.rest?'<div class="look-empty look-rest">🏠　記録対象を使わなかった日</div>':
+        '<div class="look-empty">まだ着用アイテムは選ばれていません。下から登録できます。</div>';
+    }
+  }
+
   function renderEditor() {
     const d=localDate(selected),entry=entryFor(selected),future=selected>today();
     const cats=visibleCategoriesForDay();
     if(!cats.includes(selectedCategory)) selectedCategory=cats[0] || 'shoes';
     $('chosen-date').textContent=`${d.getMonth()+1}月${d.getDate()}日（${'日月火水木金土'[d.getDay()]}）`;
     $('entry-state').textContent=future?'未来の日付は記録できません':entry.rest?'お休みの日として登録済み':entry.items.length?`${entry.items.length}点を記録済み`:selected<state.trackingStart?'記録開始日より前です（入力可能）':'未記録です。アイテムを選んでください。';
+    renderDayLook(entry);
+    if(editorOptionsDate!==selected){
+      editorOptionsDate=selected;
+      editorOptionsOpen=!entry.items.length&&!entry.rest;
+    }
+    $('day-choices').open=editorOptionsOpen;
+    $('day-choices-title').textContent=entry.items.length||entry.rest?'着用アイテムを追加・変更':'アイテムを選ぶ';
     $('category-tabs').hidden=cats.length<=1;
     if(cats.length>1) renderCategoryPills($('category-tabs'),cats,selectedCategory,category=>{flushNote();selectedCategory=category;renderEditor();});
     const items=state.items.filter(item=>item.category===selectedCategory&&(item.active||entry.items.includes(item.id)));
@@ -530,6 +559,9 @@
     finally{$('restore-file').value='';}
   }
 
+  $('day-choices').addEventListener('toggle',()=>{
+    if(editorOptionsDate===selected) editorOptionsOpen=$('day-choices').open;
+  });
   document.querySelectorAll('[data-tab]').forEach(el=>el.addEventListener('click',()=>setTab(el.dataset.tab)));
   $('previous-month').addEventListener('click',()=>changeMonth(-1));
   $('following-month').addEventListener('click',()=>changeMonth(1));

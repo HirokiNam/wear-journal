@@ -27,3 +27,30 @@
 .item-actions button:first-child{border-color:#bed0bb;background:#f0f5ee;color:#3e6848;font-weight:650}
 
 @media(max-width:735px){.tabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px}.tab{white-space:normal;font-size:10.5px;line-height:1.3;padding:10px 5px;min-height:42px}}
+
+
+/* v3.1 — quick visual overview of the selected day's outfit. */
+.day-look{margin:17px 0 15px}
+.look-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+.look-count{font-size:11px;color:var(--sub);font-weight:650}
+.look-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.look-card{min-width:0;background:#fafaf7;border:1px solid #e4e8df;border-radius:14px;padding:9px;display:flex;flex-direction:column;gap:7px}
+.look-photo{height:112px;width:100%;display:grid;place-items:center;border-radius:10px;background:#f0f2ec;font-size:44px;overflow:hidden}
+.look-photo.has-photo{background:#f6f7f3}
+.look-photo .item-photo{width:100%;height:100%;object-fit:contain;border-radius:10px}
+.look-caption{display:flex;flex-direction:column;gap:2px;min-width:0}
+.look-category{font-size:10px;font-weight:700;color:#6f8470}
+.look-name{font-size:11.5px;line-height:1.45;color:var(--ink);font-weight:650;overflow-wrap:anywhere}
+.look-empty{font-size:12px;color:var(--sub);padding:14px;background:#f7f9f5;border:1px dashed #d9e0d4;border-radius:12px}
+.look-rest{background:#edf2e9;color:var(--olive);border-style:solid}
+.day-choices{margin:16px 0 5px;border:1px solid var(--line);border-radius:13px;background:#fff}
+.day-choices-summary{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:13px 14px;color:var(--olive);font-size:12px;font-weight:720;min-height:46px}
+.day-choices-summary::-webkit-details-marker{display:none}
+.day-choices-summary:focus-visible{outline:3px solid #9cba8b;outline-offset:2px}
+.day-choices-arrow{font-size:17px;transition:transform .12s ease;line-height:1}
+.day-choices[open] .day-choices-arrow{transform:rotate(180deg)}
+.day-choices-content{border-top:1px solid var(--line);padding:0 12px 12px}
+.day-choices-content .category-tabs{margin:12px 0}
+.day-choices-content .item-choice{padding:9px;min-height:52px}
+@media(min-width:880px){.look-photo{height:124px}}
+@media(max-width:420px){.look-grid{gap:8px}.look-card{padding:8px}.look-photo{height:104px}.look-name{font-size:11px}}

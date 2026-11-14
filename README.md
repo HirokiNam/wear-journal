@@ -1,3 +1,13 @@
+# Wear Journal v3.1 — Daily Look View
+
+This release updates only the calendar's DAILY ENTRY interface. Previously recorded items are now shown together at the top in a photo grid, grouped visually across categories. The long list of choices starts collapsed for recorded days and opens from **「着用アイテムを追加・変更」**. Unrecorded days start with the choices open.
+
+**No data schema changes.** LocalStorage stays `wear-journal-data-v3`, image IDs and IndexedDB remain unchanged, and existing ZIP/JSON backup compatibility is preserved. No item images are duplicated in daily logs. The public GitHub Pages URL must remain the same.
+
+**Before uploading:** Export a full ZIP backup from the **home-screen app** to iCloud Drive. Then replace existing files in the same GitHub repository with this archive's contents. Do not upload the ZIP backup to GitHub. After deploy, open the home-screen app and confirm the date, categories, images and wear logs. Do not remove the home-screen app or clear website data.
+
+---
+
 # Wear Journal v3.0 — GitHub Pages
 
 靴からはじめる、写真付きの着用記録アプリ。外部データベースやアカウントは不要です。v2の記録を保持しながら、アイテムの写真と月間サマリーに対応しました。
